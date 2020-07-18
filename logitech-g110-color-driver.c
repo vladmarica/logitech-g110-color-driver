@@ -36,13 +36,11 @@ libusb_device *get_keyboard_device() {
   return NULL;
 }
 
-void to_lowercase(char *str) {
-  for (char *p = str; *p != '\0'; p++) {
-    *p = tolower(*p);
-  }
-}
-
-int get_color_code(char *color_str) {
+/*
+ * Attempts to parse the given string as a color value. If the string
+ * cannot be converted to a color code, -1 is returned.
+ */
+short get_color_code(char *color_str) {
   if (strcmp(color_str, "red") == 0) {
     return 0;
   }
@@ -53,51 +51,63 @@ int get_color_code(char *color_str) {
     return 255;
   }
 
-  return atoi(color_str); // TODO: use 'strol' instead
+  return -1;
+}
+
+void print_usage() {
+  printf("Usage: logitech-g110-color-driver <color>\n");
+  printf("\t<color> is one of the following: red, blue, purple, or a number between 0 and 255\n");
 }
 
 int main(int argc, char **argv) {
   if (argc != 2) {
-    printf("Usage: logitech-g110-color-driver <color>\n");
+    print_usage();
     return EXIT_FAILURE;
   }
 
-  int color = get_color_code(argv[1]);
+  long color = get_color_code(argv[1]);
+  if (color == -1) {
+    char *end_ptr;
+    color = strtol(argv[1], &end_ptr, 10);
+    if (*end_ptr != '\0') {
+      printf("Invalid color code: %s\n\n", argv[1]);
+      print_usage();
+      return EXIT_FAILURE;
+    }
+  }
+  
   if (color < 0 || color > 255) {
     printf("Color must be between 0 and 255\n");
     return EXIT_FAILURE;
   }
 
+  // Initialize the libusb library
   int result = libusb_init(NULL);
   if (result < 0) {
     printf("Failed to initialize libusb: %s\n", libusb_error_name(result));
     return EXIT_FAILURE;
   }
 
-  printf("libusb initialized!\n");
-
+  // Search a libusb_device that is a G110 keyboard
   libusb_device *keyboard_device = get_keyboard_device();
   if (keyboard_device == NULL) {
-    printf("Could not find a Logitech G110 keyboard\n");
+    printf("Could not find a Logitech G110 keyboard connected\n");
     return EXIT_FAILURE;
   }
 
-  printf("Logitech G110 keyboard found!\n");
-
+  // Attempt to open a handle to the keyboard
   libusb_device_handle *keyboard_handle;
   result = libusb_open(keyboard_device, &keyboard_handle);
   if (result != 0) {
     printf("Could not open keyboard device: %s\n", libusb_error_name(result));
     if (result == LIBUSB_ERROR_ACCESS) {
-      printf("Permission denied opening device\n");
+      printf("Permission denied\n");
     }
     return EXIT_FAILURE;
   }
 
-  printf("Logitech G110 keyboard opened!\n");
-
+  // If a kernel driver is attached to the keyboard already, we need to detach it
   result = libusb_kernel_driver_active(keyboard_handle, 0);
-
   if (result == 1) {
       printf("Logitech G110 kernel driver active\n");
       result = libusb_detach_kernel_driver(keyboard_handle, 0);
@@ -105,9 +115,7 @@ int main(int argc, char **argv) {
         printf("Failed to detach kernel driver\n");
         return EXIT_FAILURE;
       }
-  } else if (result == 0) {
-      printf("Logitech G110 no kernel driver active\n");
-  } else {
+  } else if (result != 0) {
     printf("Could not check if kernel driver is attached: %s\n", libusb_error_name(result));
   }
 
@@ -117,12 +125,8 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  printf("Logitech G110 configuration set!\n");
-
-  /*
-   * Color is a scale from 0 to 255, where 0 is the most blue and 255 is the most red.
-   */
-  unsigned char buffer[] = {0x07, (char) color, 0x00, 0x00, 0xff};
+  //  Color is a scale from 0 to 255, where 0 is the most blue and 255 is the most red.
+  unsigned char buffer[] = {0x07, (unsigned char) color, 0x00, 0x00, 0xff};
   result = libusb_control_transfer(keyboard_handle, 0x21, 0x00000009, 0x00000307, 0x00000000, buffer, 0x00000005, 5000);
   if (result != 5) {
     printf("Failed to set color: %s\n", libusb_error_name(result));
